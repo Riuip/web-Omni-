@@ -1,0 +1,75 @@
+{
+  "manifest_version": 3,
+  "name": "Web-Omni (网页全能王)",
+  "version": "4.0.0",
+  "description": "视觉掌控、数据收割、多平台比价、密码管理、局域网传文件、输入保护、画中画、音频均衡、链接净化、DOM监控、膏药清理、隐私保护、渗透工具、沉浸阅读、快捷指令中枢。",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "contextMenus",
+    "downloads",
+    "alarms",
+    "notifications"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": [
+        "content-scripts/visual-dictator.js",
+        "content-scripts/data-harvester.js",
+        "content-scripts/automation-geek.js",
+        "content-scripts/immersive-modding.js",
+        "content-scripts/ecommerce-scraper.js",
+        "content-scripts/page-tools.js",
+        "content-scripts/price-comparator.js",
+        "content-scripts/password-vault.js",
+        "content-scripts/lan-transfer.js",
+        "content-scripts/privacy-shield.js",
+        "content-scripts/sticky-killer.js",
+        "content-scripts/clean-url.js",
+        "content-scripts/input-timemachine.js",
+        "content-scripts/audio-normalizer.js",
+        "content-scripts/element-pip.js",
+        "content-scripts/dom-monitor.js",
+        "content-scripts/command-hub.js"
+      ],
+      "css": [
+        "styles/command-hub.css",
+        "styles/immersive.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.youtube.com/*"],
+      "js": [
+        "content-scripts/youtube-enhancer.js"
+      ],
+      "run_at": "document_end"
+    }
+  ],
+  "action": {
+    "default_title": "Web-Omni 快捷选项"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["lan-transfer/*", "vault/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "commands": {
+    "toggle-command-hub": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+K",
+        "mac": "Command+Shift+K"
+      },
+      "description": "快捷指令中枢"
+    }
+  }
+}
