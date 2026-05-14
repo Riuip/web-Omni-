@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web-Omni · 密码管理器</title>
+  <link rel="stylesheet" href="vault.css">
+</head>
+<body>
+<div class="app">
+  <header>
+    <div>
+      <h1>密码管理器</h1>
+      <div class="sec-badge"><span class="dot"></span> AES-256-GCM 加密 · 本地存储</div>
+    </div>
+    <div id="headerBtns" style="display:none;gap:6px;"></div>
+  </header>
+
+  <div id="authScreen"></div>
+  <div id="mainScreen" style="display:none;">
+    <div class="tabs" id="mainTabs">
+      <button class="tab active" data-tab="vault">密码库 <span class="badge" id="countBadge">0</span></button>
+      <button class="tab" data-tab="generator">生成器</button>
+    </div>
+    <div id="vaultTab"></div>
+    <div id="generatorTab" style="display:none;"></div>
+  </div>
+
+  <div class="sec-info">
+    所有数据使用 AES-256-GCM 加密存储在本地 · PBKDF2 600,000次迭代派生密钥 · 永不上传
+  </div>
+</div>
+<script src="vault.js"></script>
+</body>
+</html>

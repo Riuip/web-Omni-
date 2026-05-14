@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web-Omni · 局域网文件传输</title>
+  <link rel="stylesheet" href="transfer.css">
+</head>
+<body>
+  <div class="app" id="pcApp">
+    <header>
+      <div>
+        <h1>局域网文件传输</h1>
+        <p class="subtitle">WebRTC P2P · 端到端加密 · 不经过服务器</p>
+      </div>
+    </header>
+
+    <!-- Step 1: 准备 -->
+    <div class="panel" id="setupPanel">
+      <div class="panel-header">连接设置</div>
+      <div class="panel-body">
+        <div class="connect-grid">
+          <div class="connect-card">
+            <h3>手机传文件到此电脑</h3>
+            <p class="hint" style="margin:8px 0;">手机打开下载的页面，输入房间码连接</p>
+            <div class="room-code-display" id="roomCodeDisplay">------</div>
+            <div class="qr-box" id="qrBox" style="margin:12px auto;">
+              <div id="qrTarget" style="width:160px;height:160px;display:flex;align-items:center;justify-content:center;color:#8b949e;font-size:12px;">生成中...</div>
+            </div>
+            <div style="text-align:center;margin-top:8px;">
+              <span class="conn-status connecting" id="connStatus">
+                <span class="dot"></span> <span id="connText">初始化中...</span>
+              </span>
+            </div>
+            <div class="btn-group" style="justify-content:center;margin-top:12px;">
+              <button class="btn btn-sm" id="copyCode">复制房间码</button>
+              <button class="btn btn-sm" id="reconnectBtn">重新连接</button>
+              <button class="btn btn-primary btn-sm" id="downloadMobile">下载手机端页面</button>
+            </div>
+          </div>
+          <div class="connect-card">
+            <h3>从此电脑发送文件</h3>
+            <p class="hint" style="margin:8px 0;">选择文件，连接的设备可直接下载</p>
+            <div class="drop-zone" id="dropZone">
+              <div class="drop-icon">+</div>
+              <p>拖拽文件到此处，或 <label for="fileInput" class="file-label">点击选择</label></p>
+              <input type="file" id="fileInput" multiple hidden>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 文件列表 -->
+    <div class="panel">
+      <div class="panel-header">传输记录</div>
+      <div class="panel-body">
+        <div class="file-list" id="fileList">
+          <div class="empty-state"><p>等待传输...</p></div>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <p>Web-Omni · 数据通过 WebRTC P2P 直连传输 · 不经过任何外部存储服务器</p>
+    </footer>
+  </div>
+
+  <!-- 本地库：不依赖任何 CDN -->
+  <script src="qrcode.min.js"></script>
+  <script src="peerjs.min.js"></script>
+  <script src="transfer.js"></script>
+</body>
+</html>
