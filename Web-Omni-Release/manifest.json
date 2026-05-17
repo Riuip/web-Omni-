@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Web-Omni (网页全能王)",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "description": "视觉掌控、数据收割、多平台比价、密码管理、局域网传文件、输入保护、画中画、音频均衡、链接净化、DOM监控、膏药清理、隐私保护、渗透工具、沉浸阅读、快捷指令中枢。",
   "permissions": [
     "storage",
