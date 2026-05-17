@@ -50,13 +50,14 @@
   let peer = null;
   let activeConn = null;
   let retryCount = 0;
+  let peerOpened = false; // 信令通道已就绪标记，用于区分「连接前错误」和「连接后错误」
   const MAX_RETRIES = 3;
 
   // 多个 PeerJS 信令服务器（容错）
+  // 注：Heroku 免费层 2022 年起停服，旧的 peerjs-server.herokuapp.com 已不可用，已移除
   const PEER_SERVERS = [
     {}, // 默认 PeerJS 云服务器 (0.peerjs.com)
-    { host: '0.peerjs.com', port: 443, secure: true },
-    { host: 'peerjs-server.herokuapp.com', port: 443, secure: true },
+    { host: '0.peerjs.com', port: 443, secure: true, path: '/' },
   ];
 
   function setStatus(text, state) {
@@ -65,7 +66,9 @@
   }
 
   function createPeer(serverIdx) {
-    if (peer) { try { peer.destroy(); } catch(e){} }
+    if (peer) { try { peer.destroy(); } catch(e){} peer = null; }
+    if (activeConn) { try { activeConn.close(); } catch(e){} activeConn = null; }
+    peerOpened = false;
     serverIdx = serverIdx || 0;
 
     const serverConfig = PEER_SERVERS[Math.min(serverIdx, PEER_SERVERS.length - 1)];
@@ -109,6 +112,7 @@
     peer.on('open', (id) => {
       clearTimeout(timeout);
       retryCount = 0;
+      peerOpened = true;
       setStatus('等待手机连接...', 'connecting');
 
       // 生成 QR 码（编码房间码，不是 chrome-extension URL）
@@ -117,13 +121,25 @@
     });
 
     peer.on('connection', (conn) => {
+      // 已有连接时拒绝新连接，避免双连接抢占
+      if (activeConn && activeConn.open) {
+        try { conn.close(); } catch(e){}
+        return;
+      }
       activeConn = conn;
-      setStatus('已连接', 'connected');
-      setupDataHandlers(conn);
+
+      conn.on('open', () => {
+        setStatus('已连接', 'connected');
+        setupDataHandlers(conn);
+      });
 
       conn.on('close', () => {
-        activeConn = null;
-        setStatus('对方已断开', 'connecting');
+        if (activeConn === conn) activeConn = null;
+        setStatus('对方已断开，等待重连...', 'connecting');
+      });
+
+      conn.on('error', (e) => {
+        console.warn('[WO] Conn error:', e);
       });
     });
 
@@ -131,23 +147,43 @@
       clearTimeout(timeout);
       console.error('[WO] Peer error:', err);
 
+      // 已建立信令连接后的错误（peer-unavailable / network 抖动等）不应触发服务器切换
+      if (peerOpened) {
+        if (err.type === 'peer-unavailable' || err.type === 'network') {
+          // 数据通道层面的瞬时错误，保持当前 peer，UI 不变
+          return;
+        }
+        setStatus('连接异常: ' + err.type, '');
+        return;
+      }
+
       if (err.type === 'unavailable-id') {
-        // ID 被占用，加随机后缀重试
-        const newId = peerId + Math.random().toString(36).substr(2, 2);
-        peer = new Peer(newId, opts);
+        // 房间码冲突：重新生成一个全新的房间码而不是改 ID 后缀
+        // （改后缀会让手机端按原房间码永远连不上）
+        retryCount++;
+        if (retryCount > MAX_RETRIES) {
+          setStatus('房间码冲突过多，请点击重新连接', '');
+          return;
+        }
+        // 重新走一遍流程会生成新房间码？不行——roomCode 是闭包变量
+        // 这里直接抛错走重连按钮路径
+        setStatus('房间码被占用，请点击「重新连接」', '');
         return;
       }
 
       if (serverIdx + 1 < PEER_SERVERS.length) {
         createPeer(serverIdx + 1);
+      } else if (retryCount < MAX_RETRIES) {
+        retryCount++;
+        setTimeout(() => createPeer(0), 2000);
       } else {
-        setStatus('连接失败: ' + err.type, '');
+        setStatus('信令服务器不可用，请检查网络后重试', '');
       }
     });
 
     peer.on('disconnected', () => {
-      if (!peer.destroyed) {
-        setStatus('连接断开，重连中...', 'connecting');
+      if (peer && !peer.destroyed) {
+        setStatus('信令断开，自动重连中...', 'connecting');
         try { peer.reconnect(); } catch(e){}
       }
     });
@@ -164,7 +200,7 @@
 
       switch (data.type) {
         case 'file-meta':
-          recvFiles[data.id] = { name: data.name, size: data.size, chunks: [], received: 0, startTime: Date.now() };
+          recvFiles[data.id] = { name: data.name, size: data.size, chunks: [], received: 0, startTime: Date.now(), lastUiUpdate: 0 };
           addFileItem(data.id, data.name, data.size, 'recv', '接收中...');
           break;
 
@@ -173,9 +209,14 @@
           if (!rf) return;
           rf.chunks.push(data.chunk);
           rf.received += data.chunk.byteLength || data.chunk.length || 0;
-          const pct = Math.min(100, Math.round(rf.received / rf.size * 100));
-          const speed = rf.received / ((Date.now() - rf.startTime) / 1000);
-          updateFileProgress(data.id, pct, formatSize(Math.round(speed)) + '/s');
+          // UI 节流：100ms 一次
+          const _now = Date.now();
+          if (_now - rf.lastUiUpdate > 100 || rf.received >= rf.size) {
+            rf.lastUiUpdate = _now;
+            const pct = Math.min(100, Math.round(rf.received / rf.size * 100));
+            const speed = rf.received / ((_now - rf.startTime) / 1000);
+            updateFileProgress(data.id, pct, formatSize(Math.round(speed)) + '/s');
+          }
           break;
 
         case 'file-done':
@@ -202,6 +243,14 @@
   // ============================================================
   //  文件发送（电脑 → 手机）
   // ============================================================
+  // DataChannel 缓冲区水位线：高于 HIGH 暂停读，低于 LOW 恢复读
+  const BUFFER_HIGH = 4 * 1024 * 1024;  // 4 MB
+  const BUFFER_LOW  = 1 * 1024 * 1024;  // 1 MB
+
+  function getDataChannel(conn) {
+    return conn && (conn.dataChannel || conn._dc || (conn.peerConnection && conn.peerConnection.dataChannel)) || null;
+  }
+
   function sendFile(file) {
     if (!activeConn || !activeConn.open) {
       alert('没有已连接的设备。请先让手机扫码连接。');
@@ -212,34 +261,87 @@
 
     activeConn.send({ type: 'file-meta', id: id, name: file.name, size: file.size });
 
+    const conn = activeConn;
+    const dc = getDataChannel(conn);
+    if (dc) {
+      try { dc.bufferedAmountLowThreshold = BUFFER_LOW; } catch(e){}
+    }
+
     const startTime = Date.now();
     let offset = 0;
+    let lastUiUpdate = 0;
     const reader = new FileReader();
 
     function readNext() {
+      if (!conn.open) {
+        updateFileStatus(id, '连接已断开', 'error');
+        return;
+      }
       reader.readAsArrayBuffer(file.slice(offset, offset + CHUNK));
     }
 
+    function waitForBufferDrain(cb) {
+      const channel = getDataChannel(conn);
+      if (!channel || channel.bufferedAmount <= BUFFER_LOW) { cb(); return; }
+      // 优先使用原生 bufferedamountlow 事件（即时、零轮询）
+      const onLow = () => {
+        channel.removeEventListener('bufferedamountlow', onLow);
+        cb();
+      };
+      try {
+        channel.addEventListener('bufferedamountlow', onLow);
+      } catch(e) {
+        // 退化到轮询
+        const poll = () => {
+          if (!channel || channel.bufferedAmount <= BUFFER_LOW) cb();
+          else setTimeout(poll, 30);
+        };
+        setTimeout(poll, 30);
+      }
+    }
+
     reader.onload = (ev) => {
-      activeConn.send({ type: 'file-chunk', id: id, chunk: ev.target.result });
+      try {
+        activeConn.send({ type: 'file-chunk', id: id, chunk: ev.target.result });
+      } catch (e) {
+        updateFileStatus(id, '发送失败: ' + (e.message || e), 'error');
+        return;
+      }
       offset += ev.target.result.byteLength;
 
-      const pct = Math.min(100, Math.round(offset / file.size * 100));
-      const speed = offset / ((Date.now() - startTime) / 1000);
-      updateFileProgress(id, pct, formatSize(Math.round(speed)) + '/s');
+      // UI 节流：每 100ms 才刷新一次进度
+      const now = Date.now();
+      if (now - lastUiUpdate > 100 || offset >= file.size) {
+        lastUiUpdate = now;
+        const pct = Math.min(100, Math.round(offset / file.size * 100));
+        const speed = offset / ((now - startTime) / 1000);
+        updateFileProgress(id, pct, formatSize(Math.round(speed)) + '/s');
+      }
 
       if (offset < file.size) {
-        // 流控：避免淹没 DataChannel 缓冲区
-        const dc = activeConn.dataChannel || activeConn._dc;
-        if (dc && dc.bufferedAmount > 8 * CHUNK) {
-          setTimeout(readNext, 50);
+        const channel = getDataChannel(conn);
+        if (channel && channel.bufferedAmount > BUFFER_HIGH) {
+          waitForBufferDrain(readNext);
         } else {
           readNext();
         }
       } else {
-        activeConn.send({ type: 'file-done', id: id });
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        updateFileStatus(id, '已发送 (' + elapsed + 's)', 'done');
+        // 等真实缓冲区清空后再发 file-done，并显示「已发送」，避免假完成
+        const finalize = () => {
+          try { activeConn.send({ type: 'file-done', id: id }); } catch(e){}
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          updateFileStatus(id, '已发送 (' + elapsed + 's)', 'done');
+        };
+        const channel = getDataChannel(conn);
+        if (channel && channel.bufferedAmount > 0) {
+          const wait = () => {
+            if (!channel || channel.bufferedAmount === 0) finalize();
+            else setTimeout(wait, 50);
+          };
+          wait();
+        } else {
+          finalize();
+        }
       }
     };
 
@@ -428,8 +530,8 @@
 + '  setTimeout(function(){if(!conn||conn.open===false){$("stx").textContent="连接超时，请检查房间码";$("go").disabled=false;$("go").textContent="重试";}},15000);\n'
 + '};\n'
 + 'window._rb={};\n'
-+ 'function addRecv(id,name,size){window._rb[id]={name:name,size:size,chunks:[],got:0};var e=document.createElement("div");e.className="fi";e.id="r-"+id;e.innerHTML="<span class=\\"n\\">"+name+"</span><span class=\\"s\\" id=\\"rs-"+id+"\\">0%</span>";$("fl").appendChild(e);}\n'
-+ 'function updRecv(id){var r=window._rb[id];if(!r)return;var p=Math.min(100,Math.round(r.got/r.size*100));document.getElementById("rs-"+id).textContent=p+"%";}\n'
++ 'function addRecv(id,name,size){window._rb[id]={name:name,size:size,chunks:[],got:0,lastUi:0};var e=document.createElement("div");e.className="fi";e.id="r-"+id;e.innerHTML="<span class=\\"n\\">"+name+"</span><span class=\\"s\\" id=\\"rs-"+id+"\\">0%</span>";$("fl").appendChild(e);}\n'
++ 'function updRecv(id){var r=window._rb[id];if(!r)return;var nw=Date.now();if(nw-r.lastUi<100&&r.got<r.size)return;r.lastUi=nw;var p=Math.min(100,Math.round(r.got/r.size*100));document.getElementById("rs-"+id).textContent=p+"%";}\n'
 + 'function saveRecv(id){var r=window._rb[id];if(!r)return;var b=new Blob(r.chunks);var u=URL.createObjectURL(b);var a=document.createElement("a");a.href=u;a.download=r.name;document.body.appendChild(a);a.click();a.remove();document.getElementById("rs-"+id).textContent="Done";delete window._rb[id];}\n'
 + '$("dr").onclick=function(){$("fi").click();};\n'
 + '$("fi").onchange=function(e){\n'
@@ -440,17 +542,19 @@
 + '    var el=document.createElement("div");el.className="fi";\n'
 + '    el.innerHTML="<span class=\\"n\\">"+file.name+" ("+fmt(file.size)+")</span><span class=\\"s\\" id=\\"s-"+id+"\\">0%</span>";\n'
 + '    $("fl").appendChild(el);\n'
-+ '    var off=0,rd=new FileReader();\n'
-+ '    function next(){rd.readAsArrayBuffer(file.slice(off,off+CHUNK));}\n'
++ '    var off=0,rd=new FileReader(),lastUi=0;\n'
++ '    var dc=conn.dataChannel||conn._dc;\n'
++ '    var HI=4*1024*1024,LO=1*1024*1024;\n'
++ '    if(dc){try{dc.bufferedAmountLowThreshold=LO;}catch(e){}}\n'
++ '    function next(){if(!conn.open){document.getElementById("s-"+id).textContent="断开";return;}rd.readAsArrayBuffer(file.slice(off,off+CHUNK));}\n'
++ '    function drain(cb){var c=conn.dataChannel||conn._dc;if(!c||c.bufferedAmount<=LO){cb();return;}var on=function(){c.removeEventListener("bufferedamountlow",on);cb();};try{c.addEventListener("bufferedamountlow",on);}catch(_){var p=function(){if(!c||c.bufferedAmount<=LO)cb();else setTimeout(p,30);};setTimeout(p,30);}}\n'
 + '    rd.onload=function(ev){\n'
-+ '      conn.send({type:"file-chunk",id:id,chunk:ev.target.result});\n'
++ '      try{conn.send({type:"file-chunk",id:id,chunk:ev.target.result});}catch(_){document.getElementById("s-"+id).textContent="失败";return;}\n'
 + '      off+=ev.target.result.byteLength;\n'
-+ '      var pct=Math.min(100,Math.round(off/file.size*100));\n'
-+ '      document.getElementById("s-"+id).textContent=pct+"%";\n'
-+ '      if(off<file.size){setTimeout(next,10);}else{\n'
-+ '        conn.send({type:"file-done",id:id});\n'
-+ '        document.getElementById("s-"+id).textContent="Done";\n'
-+ '      }\n'
++ '      var nw=Date.now();\n'
++ '      if(nw-lastUi>100||off>=file.size){lastUi=nw;var pct=Math.min(100,Math.round(off/file.size*100));document.getElementById("s-"+id).textContent=pct+"%";}\n'
++ '      if(off<file.size){var c2=conn.dataChannel||conn._dc;if(c2&&c2.bufferedAmount>HI){drain(next);}else{next();}}\n'
++ '      else{var c3=conn.dataChannel||conn._dc;var fin=function(){try{conn.send({type:"file-done",id:id});}catch(_){}document.getElementById("s-"+id).textContent="Done";};if(c3&&c3.bufferedAmount>0){var w=function(){if(!c3||c3.bufferedAmount===0)fin();else setTimeout(w,50);};w();}else{fin();}}\n'
 + '    };\n'
 + '    next();\n'
 + '  });\n'
