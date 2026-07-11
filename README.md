@@ -250,3 +250,6 @@ node tests/action-registry.test.cjs
 - 已移除账号、密码、Token 和 Cookie 的控制台错误信息
 
 涉及凭据、Cookie、页面源码或局域网连接信息时，请先删除敏感内容再公开提交。
+
+## 友情链接
+https://linux.do/
