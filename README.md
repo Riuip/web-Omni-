@@ -252,4 +252,5 @@ node tests/action-registry.test.cjs
 涉及凭据、Cookie、页面源码或局域网连接信息时，请先删除敏感内容再公开提交。
 
 ## 友情链接
-https://linux.do/
+LINUX DO: https://linux.do/
+强烈推荐该论坛
